@@ -164,6 +164,8 @@ details.more[open] summary{margin-bottom:10px}
 .ratetbl .r{display:grid;grid-template-columns:1fr 130px 100px;gap:8px;align-items:center;font-size:14px}
 .ratetbl select,.ratetbl input{border:1px solid var(--line-hi);background:var(--surface);padding:8px 10px;border-radius:8px;width:100%;min-width:0;font-size:14px}
 .ratetbl input:disabled{opacity:.4}
+.sortsel{border:1px solid var(--line-hi);background:var(--field);padding:7px 30px 7px 12px;border-radius:999px;font-size:13px;font-weight:700;color:var(--ink);box-shadow:inset 0 2px 4px rgba(0,0,0,.4);cursor:pointer}
+@media (max-width:640px){.sortsel{font-size:16px}}
 .fchips{display:flex;gap:6px;overflow-x:auto;margin:0 -4px 16px;padding:2px 4px 6px;scrollbar-width:none}
 .fchip{flex:none;border:1px solid var(--line-hi);background:var(--surface-2);padding:7px 14px;border-radius:999px;font-size:14px;font-weight:700;color:var(--muted);cursor:pointer;box-shadow:var(--raise-sm)}
 .fchip b{font-family:var(--f-num);color:var(--ink);margin-left:6px}
@@ -357,7 +359,7 @@ const suggestId = () => { const a = new Uint32Array(1); crypto.getRandomValues(a
 const S = {
   db: null, user: null, uid: null, isAdmin: false, demo: false, loaded: { products: false, reps: false, deals: false, payments: false },
   products: [], reps: [], deals: [], payments: [], myRepId: null, phase: "loading", authUser: null, adminLoginId: "", subs: {}, issued: null,
-  view: "rep", viewRepId: null, repTab: "fee", tab: "pay", dealRep: "", dealForm: false, month: nowYM, chart: "month",
+  view: "rep", viewRepId: null, repTab: "fee", dealSort: (() => { try { return localStorage.getItem("tora.dealSort") || "new"; } catch { return "new"; } })(), tab: "pay", dealRep: "", dealForm: false, month: nowYM, chart: "month",
   editDeal: null, editRep: null, editProduct: null, confirmDel: null, busy: false,
 };
 const data = () => S.demo ? DEMO : S;
@@ -569,7 +571,7 @@ function repPage() {
   const h = new Date().getHours(), hi = h < 5 ? "おつかれさまです" : h < 11 ? "おはようございます" : h < 18 ? "こんにちは" : "おつかれさまです";
   const state = cur.paid ? `<span class="state paid">${ic("check", "sm")}お支払い済み（${fmtDate(cur.paid.paidDate)}）</span>` : `<span class="state">${ic("clock", "sm")}今月分は月末に確定して、お支払いします</span>`;
   const payMonths = months.filter(m => m < nowYM && repMonth(repId, m).total > 0).reverse();
-  const dealList = [...deals].sort((a, b) => (b.startMonth || "").localeCompare(a.startMonth || ""));
+  const dealList = sortDeals(deals);
 
   return repTabs + `
   <section class="hero">
@@ -593,7 +595,7 @@ function repPage() {
   </section>
 
   <section class="panel">
-    <div class="head"><h2>${ic("doc")}紹介した案件</h2><span class="label">${deals.length}件</span></div>
+    <div class="head"><h2>${ic("doc")}紹介した案件 <span class="label">${deals.length}件</span></h2>${deals.length > 1 ? sortSel() : ""}</div>
     ${dealList.length ? `<div class="rows">${dealList.map(x => dealItem(x, false)).join("")}</div>` : `<div class="empty">まだ案件がありません。紹介が成約すると、管理者がここに登録します</div>`}
   </section>
 
@@ -642,6 +644,22 @@ function ratesPage(rep) {
     <div class="rows">${group("once") || `<div class="empty">ありません</div>`}</div>
   </section>`;
 }
+
+/* 案件の並び順（この端末に記憶） */
+const SORTS = [["new", "新しい順"], ["old", "古い順"], ["fee", "紹介料が高い順"], ["name", "お客様名順"], ["product", "商材ごと"], ["kind", "継続 → 単発"]];
+function sortDeals(list) {
+  const by = S.dealSort, ym = x => x.startMonth || "", nm = (a, b) => String(a.client).localeCompare(String(b.client), "ja");
+  const f = {
+    new: (a, b) => ym(b).localeCompare(ym(a)) || nm(a, b),
+    old: (a, b) => ym(a).localeCompare(ym(b)) || nm(a, b),
+    fee: (a, b) => rewardOf(b) - rewardOf(a) || nm(a, b),
+    name: nm,
+    product: (a, b) => (prodOf(a.productId)?.order ?? 999) - (prodOf(b.productId)?.order ?? 999) || ym(b).localeCompare(ym(a)),
+    kind: (a, b) => (a.kind === "once") - (b.kind === "once") || ym(b).localeCompare(ym(a)),
+  }[by] || ((a, b) => ym(b).localeCompare(ym(a)));
+  return [...list].sort(f);
+}
+const sortSel = () => `<select class="sortsel" id="dealSort" aria-label="並び替え">${SORTS.map(([k, l]) => `<option value="${k}" ${S.dealSort === k ? "selected" : ""}>${l}</option>`).join("")}</select>`;
 
 function dealItem(x, admin, hideRep) {
   const p = prodOf(x.productId), r = rewardOf(x), once = x.kind === "once";
@@ -740,7 +758,7 @@ function payHTML() {
 function dealsHTML() {
   const d = data(), e = S.editDeal || {};
   const prod = prodOf(e.productId) || d.products[0], kind = prod?.kind || "monthly";
-  const list = [...d.deals].sort((a, b) => (b.startMonth || "").localeCompare(a.startMonth || ""));
+  const list = sortDeals(d.deals);
   const can = d.products.length && d.reps.length;
   const formOpen = !!(S.dealForm || e.id);
   /* list grouped by referrer */
@@ -753,7 +771,7 @@ function dealsHTML() {
   }).join("");
   const orphan = S.dealRep ? [] : list.filter(x => !repOf(x.repId));
   const listPanel = `<section class="panel">
-    <div class="head"><h2>${ic("doc")}紹介案件の一覧</h2>${formOpen || !can ? "" : `<button class="btn primary small" id="dNew">${ic("plus", "sm")}案件を登録</button>`}</div>
+    <div class="head"><h2>${ic("doc")}紹介案件の一覧</h2><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${list.length > 1 ? sortSel() : ""}${formOpen || !can ? "" : `<button class="btn primary small" id="dNew">${ic("plus", "sm")}案件を登録</button>`}</div></div>
     ${d.reps.length ? `<div class="fchips" role="group" aria-label="紹介者で絞り込む"><button class="fchip" data-drep="" aria-pressed="${!S.dealRep}">すべて<b>${list.length}</b></button>${d.reps.map(r => `<button class="fchip" data-drep="${esc(r.id)}" aria-pressed="${S.dealRep === r.id}">${esc(r.name)}<b>${list.filter(x => x.repId === r.id).length}</b></button>`).join("")}</div>` : ""}
     ${list.length || S.dealRep ? groups + (orphan.length ? `<div class="grp"><div class="grph"><b>紹介者なし</b></div>${orphan.map(x => dealItem(x, true, true)).join("")}</div>` : "") : `<div class="empty">まだ案件がありません。「案件を登録」から、紹介してもらった案件を入れてください</div>`}
     ${list.length ? `<p class="label" style="margin-top:14px">案件を押すと編集できます。</p>` : ""}
@@ -841,6 +859,7 @@ function bind() {
   on("[data-tab]", b => { S.tab = b.dataset.tab; S.confirmDel = null; render(); window.scrollTo(0, 0); });
   on("[data-m]", b => { const n = +b.dataset.m; S.month = n ? addM(S.month, n) : nowYM; render(); });
   on("[data-chart]", b => { S.chart = b.dataset.chart; render(); });
+  { const ds = $("#dealSort"); if (ds) ds.onchange = () => { S.dealSort = ds.value; try { localStorage.setItem("tora.dealSort", ds.value); } catch {} render(); }; }
   on("[data-drep]", b => { S.dealRep = b.dataset.drep; render(); });
   { const nb = $("#dNew"); if (nb) nb.onclick = () => { S.dealForm = true; S.editDeal = null; render(); window.scrollTo(0, 0); $("#dClient")?.focus(); }; }
   on("[data-reptab]", b => { S.repTab = b.dataset.reptab; render(); window.scrollTo(0, 0); });
