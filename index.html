@@ -164,6 +164,18 @@ details.more[open] summary{margin-bottom:10px}
 .ratetbl .r{display:grid;grid-template-columns:1fr 130px 100px;gap:8px;align-items:center;font-size:14px}
 .ratetbl select,.ratetbl input{border:1px solid var(--line-hi);background:var(--surface);padding:8px 10px;border-radius:8px;width:100%;min-width:0;font-size:14px}
 .ratetbl input:disabled{opacity:.4}
+.brk{grid-column:1/-1;display:grid;margin-top:8px;border-top:1px dashed var(--line-hi)}
+.bl{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;border-bottom:1px dashed var(--line)}
+.bl:last-child{border-bottom:0}
+.bl .bn{display:grid;min-width:0}
+.bl .bn b{font-size:14px}
+.bl .bn .label{font-size:12px}
+.bl>b{font-size:15px;flex:none}
+.pdl{grid-column:1/-1;margin-top:6px}
+.pdl summary{cursor:pointer;font-size:13px;font-weight:700;color:var(--accent-hi);padding:4px 0}
+.run{margin-top:6px;font-size:13px;font-weight:700;color:var(--stock-ink);line-height:1.5}
+.run b{font-size:15px;margin:0 6px 0 2px}
+.run span{color:var(--muted);font-weight:500;font-size:12px;white-space:nowrap}
 .sortsel{border:1px solid var(--line-hi);background:var(--field);padding:7px 30px 7px 12px;border-radius:999px;font-size:13px;font-weight:700;color:var(--ink);box-shadow:inset 0 2px 4px rgba(0,0,0,.4);cursor:pointer}
 @media (max-width:640px){.sortsel{font-size:16px}}
 .fchips{display:flex;gap:6px;overflow-x:auto;margin:0 -4px 16px;padding:2px 4px 6px;scrollbar-width:none}
@@ -402,6 +414,7 @@ async function readSetup() { try { const d = await getDoc(doc(fs, "meta/setup"))
 
 (async function boot() {
   render();
+  await 0; /* let the rest of the script finish loading first */
   if (!fbApp) { S.demo = true; S.isAdmin = true; S.view = "admin"; S.phase = "app"; render(); return; }
   S.db = fdb;
   try { await setPersistence(auth, browserLocalPersistence); } catch {}
@@ -570,7 +583,9 @@ function repPage() {
   const monthlyNow = deals.filter(x => x.kind === "monthly" && activeIn(x, nowYM)), stockPerMonth = monthlyNow.reduce((a, x) => a + rewardOf(x), 0);
   const h = new Date().getHours(), hi = h < 5 ? "おつかれさまです" : h < 11 ? "おはようございます" : h < 18 ? "こんにちは" : "おつかれさまです";
   const state = cur.paid ? `<span class="state paid">${ic("check", "sm")}お支払い済み（${fmtDate(cur.paid.paidDate)}）</span>` : `<span class="state">${ic("clock", "sm")}今月分は月末に確定して、お支払いします</span>`;
-  const payMonths = months.filter(m => m < nowYM && repMonth(repId, m).total > 0).reverse();
+  const payMonths = months.filter(m => m < nowYM && paidOf(repId, m));
+  const paidSum = payMonths.reduce((a, m) => a + repMonth(repId, m).total, 0);
+  const unpaid = unpaidSummary(repId);
   const dealList = sortDeals(deals);
 
   return repTabs + `
@@ -601,10 +616,13 @@ function repPage() {
 
   <section class="panel">
     <div class="head"><h2>${ic("wallet")}お支払い状況</h2></div>
-    ${payMonths.length ? `<div class="rows">${payMonths.map(m => { const r = repMonth(repId, m);
-      return `<div class="item"><div class="main"><b>${ymLabel(m)}分</b><div class="sub">${r.paid ? `${fmtDate(r.paid.paidDate)} にお支払い` : "お支払いの準備中です"}</div></div>
-        <div class="amt"><b class="num">${yen(r.total)}</b>${r.paid ? `<span class="badge b-paid">${ic("check")}支払い済み</span>` : `<span class="badge b-due">お支払い待ち</span>`}</div></div>`; }).join("")}</div>`
-    : `<div class="empty">先月までの紹介料があると、ここに支払い状況が並びます</div>`}
+    ${unpaid || payMonths.length ? `<div class="rows">
+      ${unpaid ? `<div class="item"><div class="main"><b>${rangeLabel(unpaid.months)}</b><div class="sub">お支払いの準備中です</div></div>
+        <div class="amt"><b class="num">${yen(unpaid.total)}</b><span class="badge b-due">お支払い待ち</span></div>${breakdownHTML(unpaid)}</div>` : ""}
+      ${payMonths.length ? `<div class="item"><div class="main"><b>${rangeLabel(payMonths)}</b><div class="sub">受け取り済みの合計</div></div>
+        <div class="amt"><b class="num">${yen(paidSum)}</b><span class="badge b-paid">${ic("check")}支払い済み</span></div>
+        <details class="pdl"><summary>月ごとの支払日を見る</summary>${[...payMonths].reverse().map(m => { const r = repMonth(repId, m); return `<div class="bl"><span class="bn"><b>${ymLabel(m)}分</b><span class="label">${fmtDate(r.paid.paidDate)} にお支払い</span></span><b class="num">${yen(r.total)}</b></div>`; }).join("")}</details></div>` : ""}
+    </div>` : `<div class="empty">先月までの紹介料があると、ここに支払い状況が並びます</div>`}
   </section>
   ${S.isAdmin ? "" : pwPanelHTML("パスワードを変更")}`;
 }
@@ -645,6 +663,19 @@ function ratesPage(rep) {
   </section>`;
 }
 
+/* 未払いの月をまとめる：紹介者ごとに「◯月〜◯月分の合計」と、案件ごとの内訳 */
+function unpaidSummary(repId) {
+  const months = monthsUntilNow(repId).filter(m => m < nowYM && !paidOf(repId, m) && repMonth(repId, m).total > 0);
+  if (!months.length) return null;
+  const total = months.reduce((a, m) => a + repMonth(repId, m).total, 0);
+  const deals = dealsOf(repId).map(x => { const ms = months.filter(m => activeIn(x, m)); return ms.length ? { x, ms, sum: ms.length * rewardOf(x) } : null; }).filter(Boolean).sort((a, b) => b.sum - a.sum);
+  return { months, total, deals };
+}
+const rangeLabel = (ms, suf = "分") => { if (ms.length === 1) return `${ymLabel(ms[0])}${suf}`; const a = ms[0], b = ms[ms.length - 1]; return `${ymLabel(a)}〜${a.slice(0, 4) === b.slice(0, 4) ? Number(b.slice(5)) + "月" : ymLabel(b)}${suf}（${ms.length}か月）`; };
+const breakdownHTML = u => `<div class="brk">${u.deals.map(dl => `<div class="bl"><span class="bn"><b>${esc(dl.x.client)}</b><span class="label">${esc(prodOf(dl.x.productId)?.name || "")}・${rangeLabel(dl.ms)}${dl.ms.length > 1 ? `　${yen(rewardOf(dl.x))} × ${dl.ms.length}` : ""}</span></span><b class="num">${yen(dl.sum)}</b></div>`).join("")}</div>`;
+/* 継続の案件：これまで紹介料が発生した月（今月まで） */
+const dealMonths = x => { if (x.kind === "once" || x.status === "pending" || !x.startMonth) return []; const out = []; for (let m = x.startMonth, n = 0; m <= nowYM && (!x.endMonth || m <= x.endMonth) && n < 240; m = addM(m, 1), n++) out.push(m); return out; };
+
 /* 案件の並び順（この端末に記憶） */
 const SORTS = [["new", "新しい順"], ["old", "古い順"], ["fee", "紹介料が高い順"], ["name", "お客様名順"], ["product", "商材ごと"], ["kind", "継続 → 単発"]];
 function sortDeals(list) {
@@ -669,6 +700,7 @@ function dealItem(x, admin, hideRep) {
   return `<${tag} class="item ${once ? "o" : "m"} ${admin ? "click" : ""} ${st && x.status !== "pending" ? "dim" : ""}" ${admin ? `data-edit-deal="${esc(x.id)}"` : ""}>
     <div class="main"><b>${esc(x.client)}</b>
       <div class="sub">${kindTag(x.kind)}<span>${esc(p?.name || "—")}</span>${st}</div>
+      ${(() => { const ms = dealMonths(x); return ms.length > 1 ? `<div class="run">これまでの合計 <b class="num">${yen(ms.length * rewardOf(x))}</b><span>${rangeLabel(ms, "")}</span></div>` : ""; })()}
       <div class="sub"><span>${period}</span>${qtyOf(x) > 1 ? `<span class="badge b-pending">× ${qtyOf(x)}</span>` : ""}${admin && !hideRep ? `<span>・${esc(repOf(x.repId)?.name || "—")}</span>` : ""}</div></div>
     <div class="amt"><b class="num">${yen(r)}</b><span class="per">${once ? "1回" : "毎月"}</span></div>
   </${tag}>`;
@@ -727,11 +759,9 @@ function payHTML() {
   const d = data(), ym = S.month;
   const rows = d.reps.map(r => ({ r, ...repMonth(r.id, ym) })).filter(x => x.total || x.paid).sort((a, b) => b.total - a.total);
   const total = rows.reduce((a, x) => a + x.total, 0), paid = rows.filter(x => x.paid).reduce((a, x) => a + x.total, 0);
-  /* past months that still have unpaid fees */
-  const due = [];
-  for (const r of d.reps) for (const m of monthsUntilNow(r.id)) { if (m >= nowYM) continue; const t = repMonth(r.id, m); if (t.total && !t.paid) due.push({ r, m, ...t }); }
-  due.sort((a, b) => a.m.localeCompare(b.m));
-  const dueSum = due.reduce((a, x) => a + x.total, 0);
+  /* past months that still have unpaid fees, grouped per referrer */
+  const due = d.reps.map(r => ({ r, u: unpaidSummary(r.id) })).filter(x => x.u).sort((a, b) => b.u.total - a.u.total);
+  const dueSum = due.reduce((a, x) => a + x.u.total, 0);
   return `<section class="panel">
     <div class="head"><h2>${ic("wallet")}紹介料の支払い</h2>${monthNav()}</div>
     <div class="kpis">
@@ -749,8 +779,10 @@ function payHTML() {
   </section>
   <section class="panel">
     <div class="head"><h2>${ic("clock")}まだ払っていない紹介料（先月まで）</h2>${dueSum ? `<b class="num" style="color:var(--bad);font-size:18px">${yen(dueSum)}</b>` : ""}</div>
-    ${due.length ? `<div class="rows">${due.map(x => `<div class="item"><div class="main"><b>${esc(x.r.name)}</b><div class="sub">${ymLabel(x.m)}分</div></div>
-      <div class="amt"><b class="num">${yen(x.total)}</b><button class="btn small good" data-pay="${esc(x.r.id)}" data-ym="${x.m}">${ic("check", "sm")}支払い済みにする</button></div></div>`).join("")}</div>`
+    ${due.length ? `<div class="rows">${due.map(x => `<div class="item"><div class="main"><b>${esc(x.r.name)}</b><div class="sub">${rangeLabel(x.u.months)}</div></div>
+      <div class="amt"><b class="num" style="color:var(--bad)">${yen(x.u.total)}</b><span class="per">合計</span></div>
+      ${breakdownHTML(x.u)}
+      <div class="act"><input type="date" class="dateinp" id="pda_${esc(x.r.id)}" value="${today()}" aria-label="支払った日"><button class="btn small good" data-payrange="${esc(x.r.id)}">${ic("check", "sm")}まとめて支払い済みにする</button></div></div>`).join("")}</div>`
     : `<div class="empty">未払いはありません</div>`}
   </section>`;
 }
@@ -889,6 +921,15 @@ function bind() {
     const date = document.getElementById("pd_" + repId)?.value || today();
     try { if (await save("payments", payId(ym, repId), { ym, repId, stock: t.stock, once: t.once, total: t.total, paid: true, paidDate: date })) toast(`${repOf(repId)?.name || ""}さんの${ymLabel(ym)}分 ${yen(t.total)} を支払い済みにしました`); }
     finally { S.busy = false; render(); }
+  });
+  on("[data-payrange]", async b => {
+    if (S.busy) return; S.busy = true;
+    const repId = b.dataset.payrange, u = unpaidSummary(repId), date = document.getElementById("pda_" + repId)?.value || today();
+    try {
+      if (!u) return;
+      for (const ym of u.months) { const t = monthTotals(dealsOf(repId), ym); if (!(await save("payments", payId(ym, repId), { ym, repId, stock: t.stock, once: t.once, total: t.total, paid: true, paidDate: date }, true))) return; }
+      toast(`${repOf(repId)?.name || ""}さんの${rangeLabel(u.months)} ${yen(u.total)} を支払い済みにしました`);
+    } finally { S.busy = false; render(); }
   });
   on("[data-unpay]", async b => { if (await remove("payments", b.dataset.unpay)) toast("支払い済みを取り消しました"); });
   on("[data-edit-deal]", b => { S.editDeal = { ...data().deals.find(x => x.id === b.dataset.editDeal) }; S.confirmDel = null; render(); window.scrollTo(0, 0); });
