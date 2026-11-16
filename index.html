@@ -278,7 +278,9 @@ const STATUS = { won: "成約", pending: "商談中", lost: "終了" };
    単発: 受注金額 × 率（または固定額）を計上月に1回
    商談中は入れない。初期値は 紹介者ごとの設定 → 商材の標準 */
 const filled = v => v !== null && v !== undefined && v !== "" && !Number.isNaN(Number(v));
-const rewardOf = d => d.rewardType === "fixed" ? Math.floor(Number(d.fixed) || 0) : Math.floor((Number(d.amount) || 0) * (Number(d.rate) || 0) / 100);
+const qtyOf = d => Math.max(1, Math.floor(Number(d.qty) || 1));
+/* 1契約（1名）あたりの紹介料 × 数量 */
+const rewardOf = d => qtyOf(d) * (d.rewardType === "fixed" ? Math.floor(Number(d.fixed) || 0) : Math.floor((Number(d.amount) || 0) * (Number(d.rate) || 0) / 100));
 const ruleOfDeal = x => x.rewardType === "fixed" ? `固定 ${yen(x.fixed)}` : `${yen(x.amount)} × ${x.rate}%`;
 function productRule(p) {
   if (!p) return null;
@@ -649,7 +651,7 @@ function dealItem(x, admin, hideRep) {
   return `<${tag} class="item ${once ? "o" : "m"} ${admin ? "click" : ""} ${st && x.status !== "pending" ? "dim" : ""}" ${admin ? `data-edit-deal="${esc(x.id)}"` : ""}>
     <div class="main"><b>${esc(x.client)}</b>
       <div class="sub">${kindTag(x.kind)}<span>${esc(p?.name || "—")}</span>${st}</div>
-      <div class="sub"><span>${period}</span>${admin && !hideRep ? `<span>・${esc(repOf(x.repId)?.name || "—")}</span>` : ""}</div></div>
+      <div class="sub"><span>${period}</span>${qtyOf(x) > 1 ? `<span class="badge b-pending">× ${qtyOf(x)}</span>` : ""}${admin && !hideRep ? `<span>・${esc(repOf(x.repId)?.name || "—")}</span>` : ""}</div></div>
     <div class="amt"><b class="num">${yen(r)}</b><span class="per">${once ? "1回" : "毎月"}</span></div>
   </${tag}>`;
 }
@@ -763,7 +765,8 @@ function dealsHTML() {
       <div class="field"><label for="dRep">紹介者</label><select id="dRep">${d.reps.map(r => `<option value="${esc(r.id)}" ${(e.repId || S.dealRep) === r.id ? "selected" : ""}>${esc(r.name)}</option>`).join("")}</select></div>
       <div class="field"><label for="dClient">お客様名</label><input id="dClient" required value="${esc(e.client || "")}" placeholder="例：〇〇美容室"></div>
       <div class="field"><label for="dProd">商材</label><select id="dProd">${d.products.map(p => `<option value="${esc(p.id)}" ${prod?.id === p.id ? "selected" : ""}>${esc(p.name)}（${p.kind === "once" ? "単発" : "継続"}）</option>`).join("")}</select></div>
-      <div class="field"><label for="dAmount" id="dAmountL">${kind === "once" ? "受注金額（円）" : "月額（円）"}</label><input id="dAmount" type="number" inputmode="numeric" min="0" step="1" required value="${esc(e.amount ?? "")}"></div>
+      <div class="field"><label for="dAmount" id="dAmountL">${kind === "once" ? "受注金額（1件あたり・円）" : "月額（1名・1契約あたり・円）"}</label><input id="dAmount" type="number" inputmode="numeric" min="0" step="1" required value="${esc(e.amount ?? "")}"></div>
+      <div class="field"><label for="dQty">数量（人数・契約数）</label><input id="dQty" type="number" inputmode="numeric" min="1" step="1" required value="${esc(e.qty || 1)}"></div>
       <div class="field"><label for="dRate" id="dRuleL">紹介料</label><div class="pair"><select id="dType" aria-label="紹介料の決め方"><option value="rate" ${e.rewardType !== "fixed" ? "selected" : ""}>％</option><option value="fixed" ${e.rewardType === "fixed" ? "selected" : ""}>固定額</option></select><input id="dRate" type="number" inputmode="decimal" min="0" step="any" required value="${esc(e.id ? (e.rewardType === "fixed" ? e.fixed : e.rate) ?? "" : "")}" placeholder="率または金額"></div></div>
       <div class="field"><label for="dStart" id="dStartL">${kind === "once" ? "成約した月" : "支払いが始まる月"}</label><input id="dStart" type="month" required value="${esc(e.startMonth || nowYM)}"></div>
       <div class="field"><label for="dStatus">状況</label><select id="dStatus">${Object.entries(STATUS).map(([k, l]) => `<option value="${k}" ${(e.status || "won") === k ? "selected" : ""}>${l}</option>`).join("")}</select></div>
@@ -886,12 +889,13 @@ function bind() {
   if (df) {
     const upd = () => {
       const p = prodOf($("#dProd").value), once = p?.kind === "once", fixed = $("#dType").value === "fixed";
-      $("#dAmountL").textContent = once ? "受注金額（円）" : "月額（円）";
+      $("#dAmountL").textContent = once ? "受注金額（1件あたり・円）" : "月額（1名・1契約あたり・円）";
       $("#dStartL").textContent = once ? "成約した月" : "支払いが始まる月";
       $("#dEndF").hidden = once;
       $("#dRate").placeholder = fixed ? "金額（円）" : "率（%）";
-      const r = rewardOf({ rewardType: fixed ? "fixed" : "rate", fixed: $("#dRate").value, rate: $("#dRate").value, amount: $("#dAmount").value });
-      $("#dCalc").innerHTML = `${kindTag(once ? "once" : "monthly")}<span>紹介料</span><b>${yen(r)}</b><span>${once ? "（1回）" : "（解約まで毎月）"}</span>`;
+      const q = Math.max(1, Math.floor(Number($("#dQty").value) || 1));
+      const r = rewardOf({ rewardType: fixed ? "fixed" : "rate", fixed: $("#dRate").value, rate: $("#dRate").value, amount: $("#dAmount").value, qty: q });
+      $("#dCalc").innerHTML = `${kindTag(once ? "once" : "monthly")}<span>紹介料</span><b>${yen(r)}</b><span>${q > 1 ? `（${yen(r / q)} × ${q}）` : ""}${once ? "（1回）" : "（解約まで毎月）"}</span>`;
     };
     const applyDefault = () => {
       const r = defaultRule($("#dRep").value, prodOf($("#dProd").value));
@@ -899,12 +903,12 @@ function bind() {
       upd();
     };
     $("#dProd").onchange = applyDefault; $("#dRep").onchange = applyDefault;
-    ["#dAmount", "#dRate"].forEach(s => $(s).oninput = upd); $("#dType").onchange = upd;
+    ["#dAmount", "#dRate", "#dQty"].forEach(s => $(s).oninput = upd); $("#dType").onchange = upd;
     S.editDeal?.id ? upd() : applyDefault();
     df.onsubmit = async ev => {
       ev.preventDefault();
       const p = prodOf($("#dProd").value), fixed = $("#dType").value === "fixed", v = Number($("#dRate").value) || 0;
-      const body = { repId: $("#dRep").value, productId: p.id, kind: p.kind, client: $("#dClient").value.trim(), amount: Number($("#dAmount").value) || 0,
+      const body = { repId: $("#dRep").value, productId: p.id, kind: p.kind, client: $("#dClient").value.trim(), amount: Number($("#dAmount").value) || 0, qty: Math.max(1, Math.floor(Number($("#dQty").value) || 1)),
         rewardType: fixed ? "fixed" : "rate", rate: fixed ? 0 : v, fixed: fixed ? v : 0, status: $("#dStatus").value, startMonth: $("#dStart").value,
         endMonth: p.kind === "once" ? "" : $("#dEnd").value, note: $("#dNote").value.trim() };
       if (body.endMonth && body.endMonth < body.startMonth) { toast("解約した月は、始まる月より後にしてください"); return; }
