@@ -646,7 +646,7 @@ function ratesPage(rep) {
       : once ? `例：受注 ${yen(ex)} なら ${yen(f)}` : `例：月額 ${yen(ex)} なら 毎月 ${yen(f)}`;
     return `<div class="item ${once ? "o" : "m"}"><div class="main"><b>${esc(p.name)}</b>
       <div class="sub">${p.memo ? `<span>${esc(p.memo)}の</span>` : ""}<span>${r ? (r.rewardType === "fixed" ? "固定額" : r.rate + "%") : "—"}</span>${repRule(rep, p.id) ? `<span class="badge b-pending">あなた専用の率</span>` : ""}</div>
-      <div class="sub">${example}</div></div>
+      ${r ? "" : `<div class="sub">金額は案件ごとに決まります</div>`}</div>
       <div class="amt"><b class="num">${ruleText(r)}</b><span class="per">${r ? (once ? "1回" : "毎月") : ""}</span></div></div>`;
   }).join("");
   return `
